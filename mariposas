@@ -38,30 +38,28 @@
         // Importaciones de Firebase
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getFirestore, collection, onSnapshot, deleteDoc, doc, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-        import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         
-        // --- Configuración de Firebase ---
-        // Usamos las variables globales proporcionadas por el entorno
-        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        // --- Configuración de Firebase (CORREGIDA) ---
+        const firebaseConfig = {
+          apiKey: "AIzaSyCz_du9pqA8Uye_Sgm4baekxg7ldqGRGko",
+          authDomain: "instalacionmariposas.firebaseapp.com",
+          projectId: "instalacionmariposas",
+          storageBucket: "instalacionmariposas.appspot.com",
+          messagingSenderId: "79329581996",
+          appId: "1:79329581996:web:5d85cf82576073f05d3809"
+        };
+        const appId = firebaseConfig.appId;
 
         async function initializeFirebase() {
-            if (!firebaseConfig.apiKey) {
-                console.error("Configuración de Firebase no encontrada. La aplicación no puede conectarse a la base de datos.");
-                return;
-            }
             try {
                 const app = initializeApp(firebaseConfig);
                 const db = getFirestore(app);
                 const auth = getAuth(app);
                 setLogLevel('debug');
 
-                // Autenticar al usuario
-                if (typeof __initial_auth_token !== 'undefined') {
-                    await signInWithCustomToken(auth, __initial_auth_token);
-                } else {
-                    await signInAnonymously(auth);
-                }
+                // Autenticar al usuario de forma anónima
+                await signInAnonymously(auth);
                 console.log("Visualizador autenticado. UID:", auth.currentUser?.uid);
 
                 // Escuchar en la colección correcta de Firestore
