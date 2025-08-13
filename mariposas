@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Corazón de Mariposas Interactivo</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Importar MediaPipe -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #000; }
+        canvas { display: block; position: absolute; top: 0; left: 0; }
+        #main-canvas { z-index: 2; pointer-events: none; }
+        #paint-canvas { z-index: 1; }
+        .input_video { display: none; }
+        #controls { position: absolute; top: 20px; left: 20px; background-color: rgba(255, 255, 255, 0.1); backdrop-filter: blur(10px); border: 1px solid rgba(255, 255, 255, 0.2); color: white; padding: 15px; border-radius: 10px; z-index: 100; transition: opacity 0.3s ease, transform 0.3s ease; }
+        #controls.hidden { opacity: 0; transform: translateX(-20px); pointer-events: none; }
+        .control-btn { background-color: #4a4a8a; color: white; border: none; padding: 10px 15px; border-radius: 5px; cursor: pointer; transition: background-color 0.2s; width: 100%; margin-bottom: 10px; }
+        .control-btn:hover { background-color: #6a6ad2; }
+        .control-btn.active { background-color: #c23b22; }
+    </style>
+</head>
+<body>
+    <div id="controls">
+        <h3 class="text-lg font-bold mb-2">Panel de Control</h3>
+        <button id="webcamBtn" class="control-btn">Activar Cámara</button>
+        <p class="text-xs mt-3 text-gray-300">Presiona 'H' para ocultar/mostrar</p>
+    </div>
+
+    <canvas id="main-canvas"></canvas>
+    <canvas id="paint-canvas"></canvas>
+    <video class="input_video"></video>
+
+    <script type="module">
+        // Importaciones de Firebase
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getFirestore, collection, onSnapshot, deleteDoc, doc, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        
+        // --- Configuración de Firebase ---
+        // Usamos las variables globales proporcionadas por el entorno
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+
+        async function initializeFirebase() {
+            if (!firebaseConfig.apiKey) {
+                console.error("Configuración de Firebase no encontrada. La aplicación no puede conectarse a la base de datos.");
+                return;
+            }
+            try {
+                const app = initializeApp(firebaseConfig);
+                const db = getFirestore(app);
+                const auth = getAuth(app);
+                setLogLevel('debug');
+
+                // Autenticar al usuario
+                if (typeof __initial_auth_token !== 'undefined') {
+                    await signInWithCustomToken(auth, __initial_auth_token);
+                } else {
+                    await signInAnonymously(auth);
+                }
+                console.log("Visualizador autenticado. UID:", auth.currentUser?.uid);
+
+                // Escuchar en la colección correcta de Firestore
+                const strokesCollectionRef = collection(db, `artifacts/${appId}/public/data/strokes`);
+                console.log(`Visualizador escuchando en: artifacts/${appId}/public/data/strokes`);
+
+                onSnapshot(strokesCollectionRef, (snapshot) => {
+                    snapshot.docChanges().forEach((change) => {
+                        if (change.type === "added") {
+                            const data = change.doc.data();
+                            if (data.action === 'clear') {
+                                paintStrokes.length = 0;
+                                console.log("Comando 'clear' recibido.");
+                            } else {
+                                window.addStroke(data);
+                            }
+                            // Eliminar el documento después de procesarlo para evitar que se acumulen
+                            deleteDoc(doc(strokesCollectionRef, change.doc.id));
+                        }
+                    });
+                });
+
+            } catch (error) {
+                console.error("Error al inicializar Firebase (Visualizador):", error);
+            }
+        }
+
+        // --- Setup de los Canvas ---
+        const mainCanvas = document.getElementById('main-canvas');
+        const mainCtx = mainCanvas.getContext('2d');
+        const paintCanvas = document.getElementById('paint-canvas');
+        const paintCtx = paintCanvas.getContext('2d');
+        
+        let butterflies = [];
+        let paintStrokes = [];
+        let interactionPoints = [];
+
+        // --- Versículos ---
+        const verses = [
+            { text: "She is clothed with strength and dignity.", reference: "Proverbs 31:25" },
+            { text: "You are altogether beautiful, my darling; there is no flaw in you.", reference: "Song of Solomon 4:7" },
+            { text: "I praise you because I am fearfully and wonderfully made.", reference: "Psalm 139:14" },
+            { text: "The Lord your God is with you, the Mighty Warrior who saves.", reference: "Zephaniah 3:17" }
+        ];
+        let currentVerseIndex = 0;
+        let textOpacity = 0;
+
+        // --- Control State ---
+        let handsDetected = false;
+        let webcamActive = false;
+        let hands = null;
+        let camera = null;
+        const controlsPanel = document.getElementById('controls');
+        const webcamBtn = document.getElementById('webcamBtn');
+        const videoElement = document.querySelector('.input_video');
+        
+        // Clase para los trazos de pintura
+        class PaintStroke {
+            constructor({ x, y, color }) {
+                this.x = x * paintCanvas.width;
+                this.y = y * paintCanvas.height;
+                this.color = color;
+                this.life = 600; // Vida del trazo en frames
+                this.radius = 20;
+            }
+            update() { this.life--; }
+            draw() {
+                const opacity = Math.min(1, this.life / 200);
+                paintCtx.save();
+                paintCtx.globalAlpha = opacity;
+                paintCtx.fillStyle = this.color;
+                paintCtx.shadowColor = this.color;
+                paintCtx.shadowBlur = 30;
+                paintCtx.beginPath();
+                paintCtx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                paintCtx.fill();
+                paintCtx.restore();
+            }
+        }
+        // Función global para añadir trazos desde Firebase
+        window.addStroke = (strokeData) => {
+            paintStrokes.push(new PaintStroke(strokeData));
+        };
+
+        // Clase para las mariposas
+        class Butterfly {
+            constructor(homeX, homeY, hue, orientationAngle) {
+                this.homeX = homeX; this.homeY = homeY; this.x = homeX; this.y = homeY;
+                this.hue = hue; this.orientationAngle = orientationAngle;
+                this.size = Math.random() * 8 + 8; this.flapAngle = Math.random() * Math.PI * 2;
+                this.flapSpeed = Math.random() * 0.1 + 0.05; this.velocityX = 0; this.velocityY = 0;
+                this.baseMaxSpeed = Math.random() * 2 + 1; this.maxSpeed = this.baseMaxSpeed;
+                this.maxForce = 0.1; this.wanderAngle = Math.random() * Math.PI * 2;
+                this.state = 'inFormation'; this.targetStroke = null;
+            }
+            applyForce(forceX, forceY) { this.velocityX += forceX; this.velocityY += forceY; }
+            seek(targetX, targetY) {
+                let desiredX = targetX - this.x; let desiredY = targetY - this.y;
+                const d = Math.sqrt(desiredX * desiredX + desiredY * desiredY);
+                if (d > 0) {
+                    desiredX = (desiredX / d) * this.maxSpeed; desiredY = (desiredY / d) * this.maxSpeed;
+                    let steerX = desiredX - this.velocityX; let steerY = desiredY - this.velocityY;
+                    const steerMag = Math.sqrt(steerX * steerX + steerY * steerY);
+                    if (steerMag > this.maxForce) { steerX = (steerX / steerMag) * this.maxForce; steerY = (steerY / steerMag) * this.maxForce; }
+                    this.applyForce(steerX, steerY);
+                }
+            }
+            wander() {
+                this.wanderAngle += Math.random() * 0.4 - 0.2;
+                const wanderTargetX = this.x + Math.cos(this.wanderAngle) * 100;
+                const wanderTargetY = this.y + Math.sin(this.wanderAngle) * 100;
+                this.seek(wanderTargetX, wanderTargetY);
+            }
+            update() {
+                this.flapAngle += this.flapSpeed;
+                if (this.targetStroke && this.targetStroke.life <= 0) { this.targetStroke = null; this.state = 'returning'; }
+                if (paintStrokes.length > 0 && this.state === 'inFormation' && Math.random() < 0.01) { this.targetStroke = paintStrokes[Math.floor(Math.random() * paintStrokes.length)]; this.state = 'seekingStroke'; }
+                if (handsDetected) { this.state = 'roaming'; this.maxSpeed = this.baseMaxSpeed + 4; } else if (this.state === 'roaming') { this.state = 'returning'; }
+                if (this.state === 'roaming') { this.wander(); } else if (this.state === 'seekingStroke' && this.targetStroke) { this.maxSpeed = this.baseMaxSpeed + 4; this.seek(this.targetStroke.x, this.targetStroke.y); this.wander(); } else if (this.state === 'returning' || this.state === 'inFormation') {
+                    this.maxSpeed = this.baseMaxSpeed; this.seek(this.homeX, this.homeY);
+                    const distToHome = Math.sqrt(Math.pow(this.x - this.homeX, 2) + Math.pow(this.y - this.homeY, 2));
+                    if (distToHome < 10) { if (this.state === 'returning') { this.state = 'inFormation'; } this.velocityX *= 0.9; this.velocityY *= 0.9; }
+                }
+                interactionPoints.forEach(point => {
+                    const dx = this.x - point.x; const dy = this.y - point.y; const distance = Math.sqrt(dx * dx + dy * dy);
+                    if (distance < 100) { const repelForce = (100 - distance) / 100; this.applyForce((dx / distance) * repelForce * 0.8, (dy / distance) * repelForce * 0.8); }
+                });
+                const speed = Math.sqrt(this.velocityX * this.velocityX + this.velocityY * this.velocityY);
+                if (speed > this.maxSpeed) { this.velocityX = (this.velocityX / speed) * this.maxSpeed; this.velocityY = (this.velocityY / speed) * this.maxSpeed; }
+                this.x += this.velocityX; this.y += this.velocityY;
+            }
+            draw() {
+                mainCtx.save(); mainCtx.translate(this.x, this.y);
+                const rotation = (this.velocityX !== 0 || this.velocityY !== 0) ? Math.atan2(this.velocityY, this.velocityX) : this.orientationAngle;
+                mainCtx.rotate(rotation);
+                const flutter = Math.sin(this.flapAngle); const s = this.size;
+                mainCtx.beginPath(); mainCtx.fillStyle = '#202020'; mainCtx.ellipse(0, 0, s * 0.4, s * 1.6, 0, 0, Math.PI * 2); mainCtx.fill();
+                mainCtx.strokeStyle = 'rgba(0, 0, 0, 0.7)'; mainCtx.lineWidth = 1.5;
+                mainCtx.fillStyle = `hsl(${this.hue}, 90%, 60%)`; mainCtx.beginPath(); mainCtx.moveTo(s*0.2, 0); mainCtx.bezierCurveTo(s * 3, -s * 2 + flutter * s * 2, s * 3.5, -s * 4 + flutter * s, s*0.5, -s*0.5); mainCtx.bezierCurveTo(s * 2.5, s * 1 - flutter * s, s * 2, s * 3.5 - flutter * s, s*0.2, 0); mainCtx.closePath(); mainCtx.fill(); mainCtx.stroke();
+                mainCtx.fillStyle = `hsl(${this.hue + 20}, 90%, 60%)`; mainCtx.beginPath(); mainCtx.moveTo(-s*0.2, 0); mainCtx.bezierCurveTo(-s * 3, -s * 2 + flutter * s * 2, -s * 3.5, -s * 4 + flutter * s, -s*0.5, -s*0.5); mainCtx.bezierCurveTo(-s * 2.5, s * 1 - flutter * s, -s * 2, s * 3.5 - flutter * s, -s*0.2, 0); mainCtx.closePath(); mainCtx.fill(); mainCtx.stroke();
+                mainCtx.restore();
+            }
+        }
+
+        // Función para inicializar las mariposas en forma de corazón
+        function initButterflies() {
+            butterflies = []; const centerX = mainCanvas.width / 2; const centerY = mainCanvas.height / 2;
+            const scale = Math.min(centerX, centerY) / 22; const totalButterflies = 300;
+            for (let i = 0; i < totalButterflies; i++) {
+                let t = Math.random() * 2 * Math.PI; let r = Math.random() * 0.8 + 0.2;
+                let homeX = centerX + r * scale * 16 * Math.pow(Math.sin(t), 3);
+                let homeY = centerY - r * scale * (13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t));
+                const hue = Math.random() * 360; const orientationAngle = Math.atan2(homeY - centerY, homeX - centerX) + Math.PI / 2;
+                butterflies.push(new Butterfly(homeX, homeY, hue, orientationAngle));
+            }
+        }
+
+        // Función para dibujar el texto oculto
+        function drawHiddenText() {
+            const centerX = mainCanvas.width / 2; const centerY = mainCanvas.height / 2;
+            mainCtx.save(); mainCtx.textAlign = 'center'; mainCtx.textBaseline = 'middle';
+            mainCtx.font = '26px "Times New Roman", serif'; mainCtx.fillStyle = `rgba(255, 255, 240, ${textOpacity})`;
+            mainCtx.shadowColor = `rgba(255, 220, 180, ${textOpacity * 0.7})`; mainCtx.shadowBlur = 15;
+            const verse = verses[currentVerseIndex]; mainCtx.fillText(verse.text, centerX, centerY - 15);
+            mainCtx.font = 'italic 20px "Times New Roman", serif'; mainCtx.fillStyle = `rgba(255, 255, 240, ${textOpacity * 0.8})`;
+            mainCtx.fillText(`- ${verse.reference}`, centerX, centerY + 25); mainCtx.restore();
+        }
+
+        // Loop de animación principal
+        function animate() {
+            mainCtx.clearRect(0, 0, mainCanvas.width, mainCanvas.height);
+            paintCtx.fillStyle = 'rgba(0, 0, 0, 0.05)'; paintCtx.fillRect(0, 0, paintCanvas.width, paintCanvas.height);
+            for (let i = paintStrokes.length - 1; i >= 0; i--) {
+                paintStrokes[i].update(); paintStrokes[i].draw();
+                if (paintStrokes[i].life <= 0) { paintStrokes.splice(i, 1); }
+            }
+            butterflies.forEach(b => { b.update(); b.draw(); });
+            if (handsDetected && textOpacity < 1) { textOpacity = Math.min(1, textOpacity + 0.02); } else if (!handsDetected && textOpacity > 0) {
+                textOpacity = Math.max(0, textOpacity - 0.02);
+                if (textOpacity <= 0.02) { currentVerseIndex = (currentVerseIndex + 1) % verses.length; }
+            }
+            if (textOpacity > 0) { drawHiddenText(); }
+            requestAnimationFrame(animate);
+        }
+
+        // Callback de MediaPipe Hands
+        function onResults(results) {
+            handsDetected = results.multiHandLandmarks && results.multiHandLandmarks.length > 0;
+            interactionPoints = [];
+            if (handsDetected) {
+                for (const landmarks of results.multiHandLandmarks) {
+                    for (const point of landmarks) {
+                        const canvasX = (1 - point.x) * mainCanvas.width; const canvasY = point.y * mainCanvas.height;
+                        interactionPoints.push({ x: canvasX, y: canvasY });
+                    }
+                }
+            }
+        }
+
+        // Función para activar/desactivar la webcam
+        function toggleWebcam() {
+            webcamActive = !webcamActive;
+            if (webcamActive) {
+                webcamBtn.textContent = 'Desactivar Cámara'; webcamBtn.classList.add('active');
+                hands = new Hands({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
+                hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+                hands.onResults(onResults);
+                camera = new Camera(videoElement, { onFrame: async () => await hands.send({ image: videoElement }), width: 1280, height: 720 });
+                camera.start();
+            } else {
+                webcamBtn.textContent = 'Activar Cámara'; webcamBtn.classList.remove('active');
+                if (camera) camera.stop();
+                handsDetected = false; interactionPoints = [];
+            }
+        }
+
+        // Event Listeners y inicialización
+        document.addEventListener('DOMContentLoaded', () => {
+            mainCanvas.width = paintCanvas.width = window.innerWidth;
+            mainCanvas.height = paintCanvas.height = window.innerHeight;
+            
+            webcamBtn.addEventListener('click', toggleWebcam);
+            window.addEventListener('keydown', (e) => { if (e.key.toLowerCase() === 'h') controlsPanel.classList.toggle('hidden'); });
+            window.addEventListener('resize', () => {
+                mainCanvas.width = paintCanvas.width = window.innerWidth;
+                mainCanvas.height = paintCanvas.height = window.innerHeight;
+                initButterflies();
+            });
+
+            initButterflies();
+            animate();
+            initializeFirebase();
+        });
+    </script>
+</body>
+</html>
