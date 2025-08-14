@@ -40,7 +40,7 @@
         import { getFirestore, collection, onSnapshot, deleteDoc, doc, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
         import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         
-        // --- Configuración de Firebase (CORREGIDA) ---
+        // --- Configuración de Firebase ---
         const firebaseConfig = {
           apiKey: "AIzaSyCz_du9pqA8Uye_Sgm4baekxg7ldqGRGko",
           authDomain: "instalacionmariposas.firebaseapp.com",
@@ -296,3 +296,4 @@
     </script>
 </body>
 </html>
+
