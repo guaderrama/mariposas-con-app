@@ -1,0 +1,521 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lienzo de Partículas con Gesto de Paz</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- MediaPipe Scripts -->
+    <script type="module" src="https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/vision_bundle.js"></script>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            overscroll-behavior: none;
+            background-color: #111827;
+        }
+        canvas {
+            display: block;
+            background-color: #000;
+        }
+        .control-panel {
+            background-color: #1f2937;
+            transition: transform 0.3s ease-in-out;
+            z-index: 10;
+            flex-shrink: 0;
+        }
+        .control-panel.hidden {
+            transform: translateX(-100%);
+        }
+        .slider-label { color: #d1d5db; }
+        input[type="range"] {
+            -webkit-appearance: none; appearance: none;
+            width: 100%; height: 8px;
+            background: #4b5563; border-radius: 5px;
+            outline: none; opacity: 0.7; transition: opacity .2s;
+        }
+        input[type="range"]:hover { opacity: 1; }
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none; appearance: none;
+            width: 20px; height: 20px;
+            background: #06b6d4; cursor: pointer; border-radius: 50%;
+        }
+        input[type="range"]::-moz-range-thumb {
+            width: 20px; height: 20px;
+            background: #06b6d4; cursor: pointer; border-radius: 50%;
+        }
+        select {
+            background-color: #4b5563; border-radius: 0.5rem;
+            padding: 0.5rem; color: white;
+        }
+        .divider {
+            border-top: 1px solid #4b5563;
+            margin-top: 1.25rem; margin-bottom: 1.25rem;
+        }
+        #capture-overlay {
+            position: absolute; top: 0; left: 0;
+            width: 100%; height: 100%;
+            display: none;
+            justify-content: center; align-items: center;
+            z-index: 100;
+            background-color: rgba(0,0,0,0.5);
+        }
+        #countdown {
+            font-size: 10rem;
+            color: white;
+            font-weight: bold;
+            text-shadow: 0 0 20px black;
+        }
+        #capture-instruction {
+            position: absolute; bottom: 20px; left: 50%;
+            transform: translateX(-50%);
+            background-color: rgba(0,0,0,0.5); color: white;
+            padding: 10px 20px; border-radius: 10px;
+            font-size: 1.2rem; z-index: 5; text-align: center;
+            transition: background-color 0.3s;
+        }
+        button:disabled {
+            background-color: #4b5563;
+            cursor: not-allowed;
+        }
+    </style>
+</head>
+<body class="overflow-hidden h-screen flex">
+
+    <!-- Panel de Control -->
+    <div id="control-panel" class="control-panel w-full md:w-64 p-4 flex flex-col shadow-2xl overflow-y-auto">
+        <h1 class="text-xl font-bold text-cyan-400 mb-4">Control de Partículas</h1>
+        <p id="instructions" class="text-gray-400 mb-6 text-sm">Activa la cámara para empezar. Las partículas nacerán de tus dedos.</p>
+
+        <div class="space-y-2 mb-6">
+             <button id="camera-btn" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg transition duration-300 shadow-lg">
+                Cargando IA...
+            </button>
+             <div id="status-message" class="mt-2 text-yellow-400 text-xs h-4"></div>
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="space-y-5">
+            <!-- Controles de Color -->
+            <div>
+                <label for="colorMode" class="slider-label block mb-2 text-sm font-medium">Modo de Color</label>
+                <select id="colorMode" class="w-full text-sm">
+                    <option value="rainbow">Arcoíris</option>
+                    <option value="thermal">Termal</option>
+                    <option value="neon">Neón</option>
+                    <option value="oceanic">Oceánico</option>
+                    <option value="cycle">Ciclo Automático</option>
+                    <option value="hue">Tono Fijo</option>
+                </select>
+            </div>
+            <div id="hue-control" style="display: none;">
+                <label for="hue" class="slider-label block mb-2 text-sm font-medium">Tono</label>
+                <input id="hue" type="range" min="0" max="360" value="200" class="w-full">
+            </div>
+             <div>
+                <label for="blendMode" class="slider-label block mb-2 text-sm font-medium">Modo de Fusión</label>
+                <select id="blendMode" class="w-full text-sm">
+                    <option value="source-over">Normal</option>
+                    <option value="lighter">Añadir (Lighter)</option>
+                    <option value="multiply">Multiplicar</option>
+                    <option value="difference">Diferencia</option>
+                </select>
+            </div>
+
+            <div class="divider"></div>
+
+            <!-- Controles de Físicas y Comportamiento -->
+            <div>
+                <label for="physicsMode" class="slider-label block mb-2 text-sm font-medium">Modo de Físicas</label>
+                <select id="physicsMode" class="w-full text-sm">
+                    <option value="normal">Normal</option>
+                    <option value="wind">Viento</option>
+                    <option value="explosion">Explosión</option>
+                </select>
+            </div>
+             <div id="wind-control" style="display: none;">
+                <label for="windForce" class="slider-label block mb-2 text-sm font-medium">Fuerza del Viento</label>
+                <input id="windForce" type="range" min="-0.5" max="0.5" value="0.1" step="0.05" class="w-full">
+            </div>
+            <div>
+                <label for="behaviorMode" class="slider-label block mb-2 text-sm font-medium">Comportamiento</label>
+                <select id="behaviorMode" class="w-full text-sm">
+                    <option value="dynamic">Dinámico</option>
+                    <option value="paint">Pintura</option>
+                </select>
+            </div>
+
+            <div class="divider"></div>
+
+            <!-- Otros Controles -->
+            <div>
+                <label for="particleCount" class="slider-label block mb-2 text-sm font-medium">Cantidad</label>
+                <input id="particleCount" type="range" min="1" max="10" value="2" class="w-full">
+            </div>
+            <div>
+                <label for="gravity" class="slider-label block mb-2 text-sm font-medium">Gravedad</label>
+                <input id="gravity" type="range" min="-0.2" max="0.5" value="0.05" step="0.01" class="w-full">
+            </div>
+            <div id="lifespan-control">
+                <label for="lifespan" class="slider-label block mb-2 text-sm font-medium">Duración</label>
+                <input id="lifespan" type="range" min="20" max="200" value="60" class="w-full">
+            </div>
+             <div id="trail-control">
+                <label for="trail" class="slider-label block mb-2 text-sm font-medium">Estela</label>
+                <input id="trail" type="range" min="0.01" max="0.5" value="0.15" step="0.01" class="w-full">
+            </div>
+        </div>
+         <div class="mt-auto pt-4 space-y-2">
+            <button id="reset-btn" class="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-lg transition duration-300 shadow-lg">
+                Limpiar Lienzo
+            </button>
+             <p class="text-xs text-gray-500 text-center">Presiona 'H' para ocultar/mostrar</p>
+        </div>
+    </div>
+
+    <!-- Canvas y Video -->
+    <div class="flex-1 relative">
+        <canvas id="particle-canvas" class="absolute top-0 left-0 w-full h-full"></canvas>
+        <video id="webcam-feed" autoplay playsinline class="absolute top-0 left-0 w-full h-full opacity-0"></video>
+        <div id="capture-instruction">Haz el símbolo de la paz ✌️ para capturar</div>
+        <div id="capture-overlay">
+            <span id="countdown"></span>
+        </div>
+    </div>
+
+    <script type="module">
+        import { HandLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/vision_bundle.js";
+
+        // --- CONFIGURACIÓN ---
+        const canvas = document.getElementById('particle-canvas');
+        const ctx = canvas.getContext('2d');
+        const video = document.getElementById('webcam-feed');
+        const controlPanel = document.getElementById('control-panel');
+        const cameraButton = document.getElementById('camera-btn');
+        const colorModeSelector = document.getElementById('colorMode');
+        const blendModeSelector = document.getElementById('blendMode');
+        const hueControl = document.getElementById('hue-control');
+        const hueSlider = document.getElementById('hue');
+        const physicsModeSelector = document.getElementById('physicsMode');
+        const windControl = document.getElementById('wind-control');
+        const windForceSlider = document.getElementById('windForce');
+        const behaviorModeSelector = document.getElementById('behaviorMode');
+        const lifespanControl = document.getElementById('lifespan-control');
+        const trailControl = document.getElementById('trail-control');
+        const particleCountSlider = document.getElementById('particleCount');
+        const gravitySlider = document.getElementById('gravity');
+        const lifespanSlider = document.getElementById('lifespan');
+        const trailSlider = document.getElementById('trail');
+        const resetButton = document.getElementById('reset-btn');
+        const statusMessage = document.getElementById('status-message');
+        const captureOverlay = document.getElementById('capture-overlay');
+        const countdownSpan = document.getElementById('countdown');
+        const captureInstruction = document.getElementById('capture-instruction');
+
+        let particles = [];
+        let isCameraActive = false;
+        let animationFrameId;
+        let isCapturing = false;
+        let colorCycleInterval = null;
+
+        // --- MediaPipe ---
+        let handLandmarker;
+        let lastVideoTime = -1;
+        let gestureCounter = 0;
+        const GESTURE_THRESHOLD = 60; // ~2 segundos
+
+        // --- CLASE PARTÍCULA ---
+        class Particle {
+            constructor(x, y, color) {
+                this.x = x;
+                this.y = y;
+                this.size = Math.random() * 5 + 2;
+                this.speedX = Math.random() * 4 - 2;
+                this.speedY = Math.random() * 4 - 2;
+                this.color = color;
+                this.lifespan = (behaviorModeSelector.value === 'paint') ? Infinity : parseFloat(lifespanSlider.value);
+            }
+
+            update() {
+                this.speedY += parseFloat(gravitySlider.value);
+                if (physicsModeSelector.value === 'wind') {
+                    this.speedX += parseFloat(windForceSlider.value);
+                }
+                this.x += this.speedX;
+                this.y += this.speedY;
+                if (behaviorModeSelector.value === 'dynamic' && this.size > 0.2) {
+                    this.size -= 0.1;
+                }
+                this.lifespan -= 1;
+            }
+
+            draw() {
+                ctx.fillStyle = this.color;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        }
+
+        // --- LÓGICA DE MEDIAPIPE ---
+        async function createHandLandmarker() {
+            try {
+                const vision = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm");
+                handLandmarker = await HandLandmarker.createFromOptions(vision, {
+                    baseOptions: {
+                        modelAssetPath: `https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task`,
+                        delegate: "CPU"
+                    },
+                    runningMode: "VIDEO",
+                    numHands: 2
+                });
+                statusMessage.textContent = '¡Listo para empezar!';
+                cameraButton.disabled = false;
+                cameraButton.textContent = 'Activar Cámara';
+            } catch (e) {
+                console.error("Error al cargar el modelo de MediaPipe:", e);
+                statusMessage.textContent = 'Error al cargar la IA.';
+            }
+        }
+
+        function predictWebcam() {
+            if (!isCameraActive) return;
+
+            if (video.readyState < 2) {
+                requestAnimationFrame(predictWebcam);
+                return;
+            }
+
+            if (handLandmarker) {
+                const startTimeMs = performance.now();
+                if (lastVideoTime !== video.currentTime) {
+                    lastVideoTime = video.currentTime;
+                    const results = handLandmarker.detectForVideo(video, startTimeMs);
+                    processResults(results);
+                }
+            }
+
+            animationFrameId = requestAnimationFrame(predictWebcam);
+        }
+
+        function processResults(results) {
+            // No actualizar la lógica si estamos capturando/congelados
+            if (isCapturing) return;
+
+            if (behaviorModeSelector.value === 'dynamic') {
+                ctx.globalCompositeOperation = 'source-over';
+                ctx.fillStyle = `rgba(0, 0, 0, ${trailSlider.value})`;
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+            }
+            handleParticles();
+
+            let peaceSignDetected = false;
+            if (results.landmarks && results.landmarks.length > 0) {
+                for (const landmarks of results.landmarks) {
+                    const fingerTips = [landmarks[4], landmarks[8], landmarks[12], landmarks[16], landmarks[20]];
+                    fingerTips.forEach(tip => {
+                        const canvasX = (1 - tip.x) * canvas.width;
+                        const canvasY = tip.y * canvas.height;
+                        generateParticles(canvasX, canvasY);
+                    });
+
+                    if (isPeaceSign(landmarks)) {
+                        peaceSignDetected = true;
+                    }
+                }
+            }
+            updateGestureCounter(peaceSignDetected);
+        }
+
+        // --- LÓGICA DE GESTOS Y PARTÍCULAS ---
+        function isPeaceSign(landmarks) {
+            const indexTip = landmarks[8];
+            const middleTip = landmarks[12];
+            const ringTip = landmarks[16];
+            const pinkyTip = landmarks[20];
+            const indexPip = landmarks[6];
+            const middlePip = landmarks[10];
+            const ringPip = landmarks[14];
+            const pinkyPip = landmarks[18];
+
+            const isIndexUp = indexTip.y < indexPip.y;
+            const isMiddleUp = middleTip.y < middlePip.y;
+            const isRingDown = ringTip.y > ringPip.y;
+            const isPinkyDown = pinkyTip.y > pinkyPip.y;
+
+            return isIndexUp && isMiddleUp && isRingDown && isPinkyDown;
+        }
+
+        function updateGestureCounter(detected) {
+            if (detected && !isCapturing) {
+                gestureCounter++;
+                const progress = Math.min(1, gestureCounter / GESTURE_THRESHOLD);
+                captureInstruction.textContent = `Capturando en ${3 - Math.floor(progress * 3)}...`;
+                captureInstruction.style.backgroundColor = `rgba(6, 182, 212, ${0.5 + progress * 0.5})`;
+            } else {
+                gestureCounter = 0;
+                captureInstruction.textContent = 'Haz el símbolo de la paz ✌️ para capturar';
+                captureInstruction.style.backgroundColor = 'rgba(0,0,0,0.5)';
+            }
+            if (gestureCounter >= GESTURE_THRESHOLD) {
+                triggerCapture();
+                gestureCounter = 0;
+            }
+        }
+
+        function generateParticles(x, y) {
+            const particleCount = parseInt(particleCountSlider.value);
+            const colorMode = colorModeSelector.value;
+            const hue = hueSlider.value;
+
+            for(let j = 0; j < particleCount; j++) {
+                let color;
+                switch (colorMode) {
+                    case 'thermal': const thermalHue = 240 - (y / canvas.height) * 240; color = `hsl(${thermalHue}, 100%, 50%)`; break;
+                    case 'hue': color = `hsl(${hue}, 100%, 70%)`; break;
+                    case 'neon': const neonColors = ['#ff00ff', '#00ffff', '#39ff14']; color = neonColors[Math.floor(Math.random() * neonColors.length)]; break;
+                    case 'oceanic': const oceanicColors = ['#003366', '#006699', '#0099cc', '#33ccff', '#e0ffff']; color = oceanicColors[Math.floor(Math.random() * oceanicColors.length)]; break;
+                    case 'rainbow': default: color = `hsl(${Math.random() * 360}, 100%, 70%)`; break;
+                }
+                particles.push(new Particle(x, y, color));
+            }
+        }
+
+        function handleParticles() {
+            ctx.globalCompositeOperation = blendModeSelector.value;
+            for (let i = particles.length - 1; i >= 0; i--) {
+                particles[i].update();
+                particles[i].draw();
+                if (behaviorModeSelector.value === 'dynamic' && (particles[i].lifespan <= 0 || particles[i].size <= 0.2)) {
+                    particles.splice(i, 1);
+                }
+            }
+            ctx.globalCompositeOperation = 'source-over';
+        }
+
+        // --- LÓGICA DE LA APLICACIÓN ---
+        async function startCamera() {
+            if (isCameraActive) return;
+            try {
+                statusMessage.textContent = 'Accediendo a la cámara...';
+                const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } });
+                video.srcObject = stream;
+                video.addEventListener("loadeddata", predictWebcam);
+
+                cameraButton.textContent = 'Cámara Activa';
+                cameraButton.disabled = true;
+                statusMessage.textContent = '';
+                isCameraActive = true;
+                captureInstruction.style.display = 'block';
+            } catch (err) {
+                console.error("Error al acceder a la cámara:", err);
+                statusMessage.textContent = 'Error al acceder a la cámara.';
+            }
+        }
+
+        function triggerCapture() {
+            if (isCapturing) return;
+            isCapturing = true;
+            captureOverlay.style.display = 'flex';
+
+            let count = 3;
+            countdownSpan.textContent = count;
+            const countdownInterval = setInterval(() => {
+                count--;
+                if (count > 0) {
+                    countdownSpan.textContent = count;
+                } else {
+                    clearInterval(countdownInterval);
+                    countdownSpan.textContent = '¡Sonríe!';
+                    // Congelar la imagen por 2 segundos
+                    setTimeout(() => {
+                        captureOverlay.style.display = 'none';
+                        isCapturing = false;
+                        resetButton.click(); // Opcional: limpiar el lienzo después de capturar
+                    }, 2000);
+                }
+            }, 1000);
+        }
+
+        function resizeCanvas() {
+            const container = canvas.parentElement;
+            canvas.width = container.clientWidth;
+            canvas.height = container.clientHeight;
+        }
+
+        // --- EVENT LISTENERS ---
+        window.addEventListener('resize', resizeCanvas);
+        cameraButton.addEventListener('click', startCamera);
+        resetButton.addEventListener('click', () => {
+            particles = [];
+            ctx.globalCompositeOperation = 'source-over';
+            ctx.fillStyle = 'black';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+        });
+
+        colorModeSelector.addEventListener('change', (e) => {
+            hueControl.style.display = (e.target.value === 'hue') ? 'block' : 'none';
+            if(colorCycleInterval) {
+                clearInterval(colorCycleInterval);
+                colorCycleInterval = null;
+            }
+            if (e.target.value === 'cycle') {
+                const cycleModes = ['rainbow', 'thermal', 'neon', 'oceanic'];
+                let currentIndex = 0;
+                colorModeSelector.value = cycleModes[currentIndex];
+                colorCycleInterval = setInterval(() => {
+                    currentIndex = (currentIndex + 1) % cycleModes.length;
+                    colorModeSelector.value = cycleModes[currentIndex];
+                    // Disparar el evento 'change' manualmente para que se actualice la UI
+                    colorModeSelector.dispatchEvent(new Event('change'));
+                }, 5000);
+            }
+        });
+
+        physicsModeSelector.addEventListener('change', (e) => {
+            windControl.style.display = (e.target.value === 'wind') ? 'block' : 'none';
+        });
+
+        behaviorModeSelector.addEventListener('change', (e) => {
+            lifespanControl.style.display = e.target.value === 'paint' ? 'none' : 'block';
+            trailControl.style.display = e.target.value === 'paint' ? 'none' : 'block';
+        });
+
+        canvas.addEventListener('click', (e) => {
+            if (physicsModeSelector.value !== 'explosion') return;
+            const rect = canvas.getBoundingClientRect();
+            const clickX = e.clientX - rect.left;
+            const clickY = e.clientY - rect.top;
+            const explosionStrength = 15;
+            particles.forEach(p => {
+                const dx = p.x - clickX;
+                const dy = p.y - clickY;
+                const distance = Math.sqrt(dx * dx + dy * dy) || 1;
+                const force = Math.min(explosionStrength, 500 / distance);
+                p.speedX += (dx / distance) * force;
+                p.speedY += (dy / distance) * force;
+            });
+        });
+
+        window.addEventListener('keydown', (e) => {
+            if (e.key.toLowerCase() === 'h') {
+                controlPanel.classList.toggle('hidden');
+            }
+        });
+
+        // --- INICIALIZACIÓN ---
+        function init() {
+            captureInstruction.style.display = 'none';
+            resizeCanvas();
+            cameraButton.disabled = true;
+            createHandLandmarker();
+        }
+
+        init();
+    </script>
+</body>
+</html>
